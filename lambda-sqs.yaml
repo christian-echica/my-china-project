@@ -1,0 +1,113 @@
+Resources:
+  # SQS Queue
+  MySQSQueue:
+    Type: AWS::SQS::Queue
+
+  # IAM Role for Lambda
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaSQSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt MySQSQueue.Arn
+
+  # Lambda Function
+  MyLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import uuid
+          import json
+          
+          def lambda_handler(event, context):
+              sqs = boto3.client('sqs')
+              queue_url = os.environ['SQS_QUEUE_URL']
+              
+              random_str = str(uuid.uuid4())
+              message_body = f"hello world...{random_str}"
+              
+              sqs_response = sqs.send_message(
+                  QueueUrl=queue_url,
+                  MessageBody=message_body
+              )
+              
+              if 'awslogs' in event:
+                  return {
+                      'message': f'Message sent to SQS: {message_body}',
+                      'sqs_response': sqs_response
+                  }
+              
+              http_response = {
+                  'statusCode': 200,
+                  'headers': {
+                      'Content-Type': 'application/json'
+                  },
+                  'body': json.dumps({
+                      'message': f'Message sent to SQS: {message_body}',
+                      'sqs_response': sqs_response
+                  })
+              }
+              return http_response
+      Runtime: python3.8
+      Environment:
+        Variables:
+          SQS_QUEUE_URL: !Ref MySQSQueue
+
+  # ALB resources
+  MyALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      Subnets: 
+        - subnet-0df20395012d259dc
+        - subnet-013f8c640ff34f176
+      Scheme: internet-facing
+      Type: application
+  
+  MyALBListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref MyLambdaTargetGroup
+      LoadBalancerArn: !Ref MyALB
+      Port: 80
+      Protocol: HTTP
+
+  MyLambdaTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      Targets:
+        - Id: !GetAtt MyLambdaFunction.Arn
+      TargetType: lambda
+  
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref MyLambdaFunction
+      Principal: elasticloadbalancing.amazonaws.com
