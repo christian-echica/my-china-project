@@ -1,0 +1,75 @@
+import os
+import boto3
+import json
+import traceback
+import urllib.request
+
+# Setup the proxy
+os.environ['HTTP_PROXY'] = os.environ.get('http_proxy')
+os.environ['HTTPS_PROXY'] = os.environ.get('https_proxy')
+
+# Initialize SQS client
+sqs = boto3.client('sqs', region_name='us-east-1')
+
+# Replace with your SQS Queue URL
+queue_url = "https://sqs.us-east-1.amazonaws.com/371894258952/shitqueu"
+
+def lambda_handler(event, context):
+    try:
+        # Setting up the proxy
+        proxy = urllib.request.ProxyHandler({
+            'http': os.environ['HTTP_PROXY'],
+            'https': os.environ['HTTPS_PROXY']
+        })
+        opener = urllib.request.build_opener(proxy)
+        urllib.request.install_opener(opener)
+        
+        # Parsing the HTTP path from the event
+        http_path = event['path']
+
+        if http_path == '/':
+            return {
+                'statusCode': 200,
+                'body': json.dumps({"message": "You have invoked a Lambda via ELB"})
+            }
+        
+        elif http_path == '/sendmessage':
+            # Send message to SQS queue
+            response = sqs.send_message(
+                QueueUrl=queue_url,
+                MessageBody='Hello from Lambda - CHRISTIAN LATEST CODE'
+            )
+            
+            return {
+                'statusCode': 200,
+                'body': json.dumps({"message": "Successfully sent the message", "MessageId": response['MessageId']})
+            }
+
+        elif http_path == '/getmessage':
+            # Receive messages from SQS queue
+            response = sqs.receive_message(
+                QueueUrl=queue_url,
+                MaxNumberOfMessages=10  # adjust this based on your needs
+            )
+
+            messages = response.get('Messages', [])
+            message_bodies = [msg['Body'] for msg in messages]
+
+            return {
+                'statusCode': 200,
+                'body': json.dumps({"messages": message_bodies})
+            }
+            
+        else:
+            return {
+                'statusCode': 400,
+                'body': json.dumps({"message": "Invalid path"})
+            }
+
+    except Exception as e:
+        print("Error:", e)
+        traceback.print_exc()  # Print the full stack trace
+        return {
+            'statusCode': 500,
+            'body': json.dumps({"message": "Failed to process the request"})
+        }
